@@ -148,16 +148,16 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    response = st.session_state.qa_chain.invoke({"query": prompt})
-                    answer = response.get("result", "I couldn't generate an answer.")
+                    response = st.session_state.qa_chain.invoke({"input": prompt})
+                    answer = response.get("answer", "I couldn't generate an answer.")
 
                     st.markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
 
                     # Show source documents in expander
-                    if "source_documents" in response:
+                    if "context" in response:
                         with st.expander("📚 View source documents"):
-                            for i, doc in enumerate(response["source_documents"], 1):
+                            for i, doc in enumerate(response["context"], 1):
                                 st.markdown(f"**Source {i}:**")
                                 st.markdown(doc.page_content)
                                 st.markdown("---")

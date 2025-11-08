@@ -11,7 +11,9 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 
 
-def create_vectorstore(documents: List[Document], persist_directory: str = "./data/chroma_db") -> Chroma:
+def create_vectorstore(
+    documents: List[Document], persist_directory: str = "./data/chroma_db"
+) -> Chroma:
     """
     Create a vector store from documents using OpenAI embeddings.
 

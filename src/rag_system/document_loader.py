@@ -7,12 +7,14 @@ This module handles loading and processing documents for the RAG system.
 from pathlib import Path
 from typing import List
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-def load_documents(file_paths: List[str], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
+def load_documents(
+    file_paths: List[str], chunk_size: int = 1000, chunk_overlap: int = 200
+) -> List[Document]:
     """
     Load and split documents from PDF files.
 
