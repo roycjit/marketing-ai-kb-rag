@@ -209,3 +209,8 @@ __marimo__/
 # Project-specific
 data/
 !data/.gitkeep
+
+docs/
+info/
+data/
+.env
