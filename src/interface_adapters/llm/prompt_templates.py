@@ -4,7 +4,8 @@ These templates are pure strings with placeholders. They live in the interface
 adapter layer because they are tied to the Ollama LLM implementation.
 """
 
-INTENT_CLASSIFICATION_SYSTEM = """You are a marketing strategy analyst. Your job is to read a client's campaign brief and infer the psychographic profile of their target audience.
+INTENT_CLASSIFICATION_SYSTEM = (  # noqa: E501
+    """You are a marketing strategy analyst. Your job is to read a client's campaign brief and infer the psychographic profile of their target audience.
 
 Extract these five dimensions:
 - risk_tolerance: low | medium | high
@@ -16,6 +17,7 @@ Extract these five dimensions:
 Respond ONLY with a JSON object matching this schema:
 {"risk_tolerance": "...", "purchase_cycle": "...", "tech_savviness": "...", "age_bracket": "...", "price_sensitivity": "..."}
 """
+)  # noqa: E501
 
 INTENT_CLASSIFICATION_PROMPT = """Campaign Brief:
 {brief}
@@ -23,7 +25,8 @@ INTENT_CLASSIFICATION_PROMPT = """Campaign Brief:
 Analyze the target audience psychographic profile and return JSON."""
 
 
-QUERY_DECOMPOSITION_SYSTEM = """You are a marketing research assistant. Given a campaign brief and an audience profile, decompose the request into 2–4 focused sub-queries that will retrieve the most relevant strategy documents.
+QUERY_DECOMPOSITION_SYSTEM = (  # noqa: E501
+    """You are a marketing research assistant. Given a campaign brief and an audience profile, decompose the request into 2–4 focused sub-queries that will retrieve the most relevant strategy documents.
 
 Each sub-query should:
 1. Target a specific aspect of the strategy (funnel type, messaging, channel, compliance, etc.)
@@ -33,6 +36,7 @@ Each sub-query should:
 Respond ONLY with a JSON array of strings:
 ["sub-query 1", "sub-query 2", "sub-query 3"]
 """
+)  # noqa: E501
 
 QUERY_DECOMPOSITION_PROMPT = """Campaign Brief:
 {brief}
@@ -47,7 +51,8 @@ Audience Profile:
 Generate 2–4 retrieval sub-queries as JSON array."""
 
 
-STRATEGY_GENERATION_SYSTEM = """You are a senior marketing strategist. Using ONLY the provided research context, create a structured funnel strategy recommendation.
+STRATEGY_GENERATION_SYSTEM = (  # noqa: E501
+    """You are a senior marketing strategist. Using ONLY the provided research context, create a structured funnel strategy recommendation.
 
 Rules:
 1. Every claim must be supported by a citation from the context.
@@ -73,6 +78,7 @@ Rules:
 }
 
 Use ONLY the fields above. Do not add campaign_name, audience, strategy, funnel_stages, pricing, or recommended_actions fields."""
+)  # noqa: E501
 
 STRATEGY_GENERATION_PROMPT = """Campaign Brief:
 {brief}
@@ -86,11 +92,13 @@ Research Context:
 Generate a structured strategy recommendation as JSON."""
 
 
-FAITHFULNESS_VALIDATION_SYSTEM = """You are a fact-checking auditor. Given a generated strategy and the source research context, identify any claims that are NOT supported by the context.
+FAITHFULNESS_VALIDATION_SYSTEM = (  # noqa: E501
+    """You are a fact-checking auditor. Given a generated strategy and the source research context, identify any claims that are NOT supported by the context.
 
 Respond ONLY with a JSON object:
 {"faithful": true/false, "unsupported_claims": ["claim 1", "claim 2"], "suggested_fix": "..."}
 """
+)  # noqa: E501
 
 FAITHFULNESS_VALIDATION_PROMPT = """Source Context:
 {context}

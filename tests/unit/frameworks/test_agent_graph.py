@@ -44,9 +44,24 @@ def mock_search():
     return uc
 
 
+@pytest.fixture
+def mock_generate():
+    uc = MagicMock()
+    uc.execute.return_value = StrategyResponse(
+        strategy_name="Test Strategy",
+        target_audience="Test Audience",
+        recommended_funnel_type="landing_page",
+        key_steps=["Step 1"],
+        rationale="Test rationale",
+        citations=["x.md"],
+        confidence="high",
+    )
+    return uc
+
+
 class TestRun:
-    def test_full_pipeline(self, mock_classify, mock_decompose, mock_search):
-        graph = FunnelAgentGraph(mock_classify, mock_decompose, mock_search)
+    def test_full_pipeline(self, mock_classify, mock_decompose, mock_search, mock_generate):
+        graph = FunnelAgentGraph(mock_classify, mock_decompose, mock_search, mock_generate)
         result = graph.run("Sell PV to cautious retirees")
 
         assert result["profile"] is not None
@@ -56,13 +71,13 @@ class TestRun:
         assert result["strategy"] is not None
         assert isinstance(result["strategy"], StrategyResponse)
 
-    def test_classify_called_with_input(self, mock_classify, mock_decompose, mock_search):
-        graph = FunnelAgentGraph(mock_classify, mock_decompose, mock_search)
+    def test_classify_called_with_input(self, mock_classify, mock_decompose, mock_search, mock_generate):
+        graph = FunnelAgentGraph(mock_classify, mock_decompose, mock_search, mock_generate)
         graph.run("My brief")
         mock_classify.execute.assert_called_once_with("My brief")
 
-    def test_decompose_called_with_profile(self, mock_classify, mock_decompose, mock_search):
-        graph = FunnelAgentGraph(mock_classify, mock_decompose, mock_search)
+    def test_decompose_called_with_profile(self, mock_classify, mock_decompose, mock_search, mock_generate):
+        graph = FunnelAgentGraph(mock_classify, mock_decompose, mock_search, mock_generate)
         graph.run("brief")
 
         call_args = mock_decompose.execute.call_args[1]

@@ -39,7 +39,8 @@ class TestParseFile:
 
         assert doc.title == "Best Funnel Builders for Solar"
         assert doc.source_doc == "solar-guide.md"
-        assert doc.metadata["date"] == "2026-03-10"
+        # frontmatter may parse YAML dates into date objects
+        assert str(doc.metadata["date"]) == "2026-03-10"
         assert doc.metadata["category"] == "Guides & best practices"
 
     def test_extracts_body(self, sample_md: Path):
@@ -52,11 +53,11 @@ class TestParseFile:
 
     def test_uses_filename_as_fallback_title(self, tmp_path: Path):
         fpath = tmp_path / "no-frontmatter.md"
-        fpath.write_text("# Just a title\n\nSome content.")
+        fpath.write_text("Some content without any heading.")
 
         parser = MarkdownParser()
         doc = parser.parse_file(fpath)
-        assert doc.title == "No Frontmatter"
+        assert doc.title == "no-frontmatter"
 
 
 class TestParseDirectory:

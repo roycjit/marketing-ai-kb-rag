@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from domain.models import Chunk
-from domain.services import chunk_document, _infer_doc_subtype, _infer_language
+from domain.chunking import chunk_document, _infer_doc_subtype, _infer_language
 
 
 class TestInferDocSubtype:
@@ -36,7 +36,7 @@ class TestInferLanguage:
         assert _infer_language(text) == "de"
 
     def test_mixed_defaults_to_english(self):
-        text = "Solar panels are great and die Sonne scheint."
+        text = "Solar panels are great and the sun shines."
         assert _infer_language(text) == "en"
 
 

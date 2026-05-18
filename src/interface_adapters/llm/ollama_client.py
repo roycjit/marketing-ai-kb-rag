@@ -1,34 +1,47 @@
 """Ollama LLM client for local inference."""
 
+from __future__ import annotations
+
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+import structlog
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from frameworks.config import OLLAMA_BASE_URL
+
+logger = structlog.get_logger(__name__)
 
 
 class OllamaClient:
     """Thin wrapper around Ollama's REST API.
 
     Supports both generation and structured JSON output.
+    Uses a persistent requests.Session for connection pooling.
     """
 
     def __init__(self, base_url: str | None = None, timeout: int = 120) -> None:
+        """Initialize client with optional base URL and timeout."""
         self._base_url = (base_url or OLLAMA_BASE_URL).rstrip("/")
         self._timeout = timeout
+        self._session = requests.Session()
+
+    def close(self) -> None:
+        """Close the underlying HTTP session."""
+        self._session.close()
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
         reraise=True,
     )
     def generate(
         self,
         model: str,
         prompt: str,
-        system: Optional[str] = None,
+        system: str | None = None,
         temperature: float = 0.7,
         max_tokens: int = 2048,
         json_mode: bool = False,
@@ -47,7 +60,7 @@ class OllamaClient:
             Generated text string.
         """
         url = f"{self._base_url}/api/generate"
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
             "stream": False,
@@ -61,20 +74,36 @@ class OllamaClient:
         if json_mode:
             payload["format"] = "json"
 
-        response = requests.post(url, json=payload, timeout=self._timeout)
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response = self._session.post(url, json=payload, timeout=self._timeout)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as exc:
+            logger.error("ollama_generate_request_failed", error=str(exc), model=model)
+            raise
 
-        text = data.get("response", "").strip()
+        data: dict[str, Any] = response.json()
+        text = str(data.get("response", "")).strip()
+
         if json_mode and text:
             # Validate it's parseable JSON
-            json.loads(text)
+            try:
+                json.loads(text)
+            except json.JSONDecodeError as exc:
+                logger.warning("ollama_generate_invalid_json", text=text[:200])
+                raise ValueError(f"Ollama returned invalid JSON: {exc}") from exc
+
         return text
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, ConnectionError)),
+        reraise=True,
+    )
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> str:
@@ -99,7 +128,14 @@ class OllamaClient:
                 "num_predict": max_tokens,
             },
         }
-        response = requests.post(url, json=payload, timeout=self._timeout)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("message", {}).get("content", "").strip()
+
+        try:
+            response = self._session.post(url, json=payload, timeout=self._timeout)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as exc:
+            logger.error("ollama_chat_request_failed", error=str(exc), model=model)
+            raise
+
+        data: dict[str, Any] = response.json()
+        message: dict[str, Any] = data.get("message", {})
+        return str(message.get("content", "")).strip()

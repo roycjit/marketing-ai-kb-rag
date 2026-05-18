@@ -2,32 +2,44 @@
 
 Supports:
 - Approximate nearest neighbor via HNSW index (cosine distance)
-- Full-text keyword search via PostgreSQL tsvector
+- Full-text keyword search via stored PostgreSQL tsvector
 - Metadata filtering on all indexed columns
 """
 
-from typing import List, Optional
+from __future__ import annotations
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from domain.models import Chunk, SearchResult
 from domain.repositories import SearchRepository
-from interface_adapters.repositories.orm_models import ChunkORM
+
+# Explicit allowlist of filterable columns to prevent SQL injection
+_FILTERABLE_COLUMNS: frozenset[str] = frozenset(
+    {
+        "chunk_id",
+        "source_doc",
+        "doc_version",
+        "doc_type",
+        "doc_subtype",
+        "language",
+    }
+)
 
 
 class PgVectorSearchRepository(SearchRepository):
     """Hybrid search backed by pgvector and PostgreSQL full-text search."""
 
     def __init__(self, session: Session) -> None:
+        """Initialize with a SQLAlchemy session."""
         self._session = session
 
     def similarity_search(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[SearchResult]:
+        filters: dict | None = None,
+    ) -> list[SearchResult]:
         """Vector similarity search with optional metadata filters.
 
         Uses cosine distance operator (<=>) provided by pgvector.
@@ -38,7 +50,7 @@ class PgVectorSearchRepository(SearchRepository):
 
         if filters:
             for key, value in filters.items():
-                if hasattr(ChunkORM, key):
+                if key in _FILTERABLE_COLUMNS:
                     where_clauses.append(f"{key} = :{key}")
                     params[key] = value
 
@@ -67,7 +79,7 @@ class PgVectorSearchRepository(SearchRepository):
         """)
 
         rows = self._session.execute(sql, params).mappings().all()
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
         for row in rows:
             chunk = Chunk(
                 chunk_id=row["chunk_id"],
@@ -82,7 +94,9 @@ class PgVectorSearchRepository(SearchRepository):
                 language=row["language"],
                 outcome_score=row["outcome_score"],
                 summary=row["summary"],
-                question_variants=list(row["question_variants"]) if row["question_variants"] else [],
+                question_variants=(
+                    list(row["question_variants"]) if row["question_variants"] else []
+                ),
             )
             results.append(SearchResult(chunk=chunk, similarity_score=float(row["similarity"])))
 
@@ -92,27 +106,28 @@ class PgVectorSearchRepository(SearchRepository):
         self,
         query: str,
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[SearchResult]:
+        filters: dict | None = None,
+    ) -> list[SearchResult]:
         """Full-text keyword search using PostgreSQL tsvector.
 
-        NOTE: This assumes a tsvector index exists on content + summary.
-        The index should be created in a migration:
-            CREATE INDEX idx_chunks_fts ON document_chunks
-            USING GIN (to_tsvector('english', content || ' ' || COALESCE(summary, '')));
+        Queries the indexed ``to_tsvector`` expression directly. The initial
+        migration creates a GIN index on this expression, so PostgreSQL can
+        use it for fast full-text retrieval without a stored column.
         """
         where_clauses = []
         params: dict = {"query": query, "top_k": top_k}
 
         if filters:
             for key, value in filters.items():
-                if hasattr(ChunkORM, key):
+                if key in _FILTERABLE_COLUMNS:
                     where_clauses.append(f"{key} = :{key}")
                     params[key] = value
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
-        # Use plainto_tsquery for simple keyword queries
+        # The GIN index from migration 001 covers this exact expression.
+        tsvector_expr = "to_tsvector('simple', content || ' ' || COALESCE(summary, ''))"
+
         sql = text(f"""
             SELECT
                 chunk_id,
@@ -127,21 +142,17 @@ class PgVectorSearchRepository(SearchRepository):
                 outcome_score,
                 summary,
                 question_variants,
-                ts_rank(
-                    to_tsvector('simple', content || ' ' || COALESCE(summary, '')),
-                    plainto_tsquery('simple', :query)
-                ) AS rank
+                ts_rank({tsvector_expr}, plainto_tsquery('simple', :query)) AS rank
             FROM document_chunks
             WHERE
                 {where_sql}
-                AND to_tsvector('simple', content || ' ' || COALESCE(summary, ''))
-                    @@ plainto_tsquery('simple', :query)
+                AND {tsvector_expr} @@ plainto_tsquery('simple', :query)
             ORDER BY rank DESC
             LIMIT :top_k
         """)
 
         rows = self._session.execute(sql, params).mappings().all()
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
         for row in rows:
             chunk = Chunk(
                 chunk_id=row["chunk_id"],
@@ -156,7 +167,9 @@ class PgVectorSearchRepository(SearchRepository):
                 language=row["language"],
                 outcome_score=row["outcome_score"],
                 summary=row["summary"],
-                question_variants=list(row["question_variants"]) if row["question_variants"] else [],
+                question_variants=(
+                    list(row["question_variants"]) if row["question_variants"] else []
+                ),
             )
             results.append(
                 SearchResult(

@@ -1,15 +1,18 @@
 """Strategy generation use case — produces structured recommendations with citations."""
 
+from __future__ import annotations
+
 import json
-from typing import List
+from typing import Any
 
 import structlog
 
 from domain.models import Chunk, PsychographicProfile, SearchResult, StrategyResponse
 from domain.services import resolve_conflicts
+from domain.validation import sanitize_brief
 from frameworks.config import OLLAMA_GENERATION_MODEL
-from interface_adapters.llm.ollama_client import OllamaClient
 from interface_adapters.llm import prompt_templates as prompts
+from interface_adapters.llm.ollama_client import OllamaClient
 
 logger = structlog.get_logger(__name__)
 
@@ -20,13 +23,14 @@ class GenerateStrategyUseCase:
     """Generate a funnel strategy from retrieved context and user brief."""
 
     def __init__(self, llm_client: OllamaClient) -> None:
+        """Initialize with an LLM client."""
         self._llm = llm_client
 
     def execute(
         self,
         brief: str,
         profile: PsychographicProfile,
-        search_results: List[SearchResult],
+        search_results: list[SearchResult],
     ) -> StrategyResponse:
         """Generate and validate a strategy recommendation.
 
@@ -38,6 +42,7 @@ class GenerateStrategyUseCase:
         Returns:
             Validated StrategyResponse with citations.
         """
+        safe_brief = sanitize_brief(brief)
         logger.info("strategy_generation_started", results_count=len(search_results))
 
         # Deduplicate and limit context
@@ -45,13 +50,26 @@ class GenerateStrategyUseCase:
         unique_chunks = resolve_conflicts(chunks)
         context_chunks = unique_chunks[:8]  # Top 8 most relevant / authoritative
 
+        if not context_chunks:
+            logger.warning("strategy_generation_no_context")
+            return StrategyResponse(
+                strategy_name="Insufficient context",
+                target_audience="Unable to determine",
+                recommended_funnel_type="TBD",
+                key_steps=["No relevant documents were retrieved."],
+                rationale="The retrieval step returned no usable context.",
+                citations=[],
+                confidence="low",
+            )
+
         # Build context string
         context = self._build_context(context_chunks)
         profile_json = profile.model_dump_json(indent=2)
 
         # Generate with retry on validation failure
+        strategy: StrategyResponse | None = None
         for attempt in range(_MAX_RETRIES + 1):
-            strategy = self._generate_once(brief, profile_json, context, attempt)
+            strategy = self._generate_once(safe_brief, profile_json, context, attempt)
             validation = self._validate(strategy, context_chunks)
 
             if validation["faithful"]:
@@ -65,10 +83,14 @@ class GenerateStrategyUseCase:
             )
             if attempt < _MAX_RETRIES:
                 # Tighten instructions for retry
-                context += f"\n\nIMPORTANT: Remove these unsupported claims: {validation.get('unsupported_claims', [])}"
+                context += (
+                    f"\n\nIMPORTANT: Remove these unsupported claims: "
+                    f"{validation.get('unsupported_claims', [])}"
+                )
 
         # Final fallback: return strategy with reduced confidence
         logger.warning("strategy_validation_max_retries_reached")
+        assert strategy is not None
         return strategy.model_copy(update={"confidence": "low"})
 
     def _generate_once(
@@ -106,14 +128,14 @@ class GenerateStrategyUseCase:
                 recommended_funnel_type="TBD",
                 key_steps=["Please review the cited sources for relevant guidance."],
                 rationale="The model failed to produce valid JSON.",
-                citations=[c.source_doc for c in []],
+                citations=[],
                 confidence="low",
             )
 
     def _validate(
         self,
         strategy: StrategyResponse,
-        context_chunks: List[Chunk],
+        context_chunks: list[Chunk],
     ) -> dict:
         """Check faithfulness and citation accuracy."""
         # 1. Citation verification: every cited source must exist in retrieved chunks
@@ -144,7 +166,7 @@ class GenerateStrategyUseCase:
                 max_tokens=512,
                 json_mode=True,
             )
-            result = json.loads(raw)
+            result: dict[str, Any] = json.loads(raw)
             return result
         except Exception as exc:
             logger.warning("faithfulness_check_failed", error=str(exc))
@@ -152,7 +174,7 @@ class GenerateStrategyUseCase:
             return {"faithful": True, "unsupported_claims": [], "suggested_fix": ""}
 
     @staticmethod
-    def _build_context(chunks: List[Chunk]) -> str:
+    def _build_context(chunks: list[Chunk]) -> str:
         """Format chunks as citation-ready context string."""
         parts = []
         for i, chunk in enumerate(chunks, 1):

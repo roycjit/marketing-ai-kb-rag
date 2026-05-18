@@ -4,8 +4,9 @@ This is the application boundary: it knows about parsers, chunkers, embedders,
 and repositories, but contains no business logic of its own.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import List
 
 import structlog
 
@@ -32,6 +33,7 @@ class IngestDocumentsUseCase:
         embedder: SentenceTransformerEmbedder,
         repository: ChunkRepository,
     ) -> None:
+        """Initialize with parser, embedder, and repository."""
         self._parser = parser
         self._embedder = embedder
         self._repository = repository
@@ -48,21 +50,32 @@ class IngestDocumentsUseCase:
         logger.info("ingestion_started", source_dir=str(source_dir))
 
         # 1. Parse
-        documents = self._parser.parse_directory(source_dir)
+        try:
+            documents = self._parser.parse_directory(source_dir)
+        except Exception as exc:
+            logger.error("ingestion_parse_failed", error=str(exc))
+            raise
+
         logger.info("documents_parsed", count=len(documents))
 
-        # 2. Chunk
-        all_chunks: List[Chunk] = []
+        # 2. Chunk with per-document error handling
+        all_chunks: list[Chunk] = []
+        failed_docs = 0
         for doc in documents:
-            chunks = chunk_document(
-                source_doc=doc.source_doc,
-                title=doc.title,
-                body=doc.body,
-                metadata=doc.metadata,
-            )
-            all_chunks.extend(chunks)
+            try:
+                chunks = chunk_document(
+                    source_doc=doc.source_doc,
+                    title=doc.title,
+                    body=doc.body,
+                    metadata=doc.metadata,
+                )
+                all_chunks.extend(chunks)
+            except Exception as exc:
+                failed_docs += 1
+                logger.error("chunk_document_failed", source_doc=doc.source_doc, error=str(exc))
+                continue
 
-        logger.info("chunks_created", count=len(all_chunks))
+        logger.info("chunks_created", count=len(all_chunks), failed_docs=failed_docs)
 
         if not all_chunks:
             logger.warning("no_chunks_created")
@@ -76,21 +89,31 @@ class IngestDocumentsUseCase:
 
         # 4. Embed in batches
         texts = [c.content for c in scored_chunks]
-        embeddings: List[List[float]] = []
+        embeddings: list[list[float]] = []
         for i in range(0, len(texts), _EMBED_BATCH_SIZE):
             batch = texts[i : i + _EMBED_BATCH_SIZE]
-            batch_embeddings = self._embedder.embed(batch)
-            embeddings.extend(batch_embeddings)
-            logger.debug("embedding_batch", batch=i // _EMBED_BATCH_SIZE + 1)
+            try:
+                batch_embeddings = self._embedder.embed(batch)
+                embeddings.extend(batch_embeddings)
+                logger.debug("embedding_batch", batch=i // _EMBED_BATCH_SIZE + 1)
+            except Exception as exc:
+                logger.error(
+                    "embedding_batch_failed", batch=i // _EMBED_BATCH_SIZE + 1, error=str(exc)
+                )
+                raise
 
         # 5. Attach embeddings to chunks
         final_chunks = [
             chunk.model_copy(update={"embedding": emb})
-            for chunk, emb in zip(scored_chunks, embeddings)
+            for chunk, emb in zip(scored_chunks, embeddings, strict=True)
         ]
 
         # 6. Persist
-        self._repository.save_all(final_chunks)
-        logger.info("ingestion_complete", chunks_saved=len(final_chunks))
+        try:
+            self._repository.save_all(final_chunks)
+            logger.info("ingestion_complete", chunks_saved=len(final_chunks))
+        except Exception as exc:
+            logger.error("ingestion_persist_failed", error=str(exc))
+            raise
 
         return len(final_chunks)

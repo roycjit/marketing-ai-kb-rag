@@ -19,6 +19,40 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - funnel_rag_network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: funnel_rag_app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-funnel_rag}:${POSTGRES_PASSWORD:-funnel_rag_local}@postgres:5432/${POSTGRES_DB:-funnel_rag}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_GENERATION_MODEL: ${OLLAMA_GENERATION_MODEL:-mistral:7b}
+      OLLAMA_CLASSIFICATION_MODEL: ${OLLAMA_CLASSIFICATION_MODEL:-llama3.2:3b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    ports:
+      - "${APP_PORT:-8501}:8501"
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - funnel_rag_network
+    # For local Ollama access from Docker container (macOS/Windows)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres_data:
+
+networks:
+  funnel_rag_network:
+    driver: bridge

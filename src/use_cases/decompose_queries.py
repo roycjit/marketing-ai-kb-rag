@@ -1,14 +1,16 @@
 """Query decomposition use case — breaks a brief into retrieval sub-queries."""
 
+from __future__ import annotations
+
 import json
-from typing import List
 
 import structlog
 
 from domain.models import PsychographicProfile
+from domain.validation import sanitize_brief
 from frameworks.config import OLLAMA_CLASSIFICATION_MODEL
-from interface_adapters.llm.ollama_client import OllamaClient
 from interface_adapters.llm import prompt_templates as prompts
+from interface_adapters.llm.ollama_client import OllamaClient
 
 logger = structlog.get_logger(__name__)
 
@@ -17,13 +19,14 @@ class DecomposeQueriesUseCase:
     """Decompose a campaign brief into focused retrieval sub-queries."""
 
     def __init__(self, llm_client: OllamaClient) -> None:
+        """Initialize with an LLM client."""
         self._llm = llm_client
 
     def execute(
         self,
         brief: str,
         profile: PsychographicProfile,
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate 2–4 sub-queries tailored to the audience profile.
 
         Args:
@@ -33,10 +36,11 @@ class DecomposeQueriesUseCase:
         Returns:
             List of sub-query strings.
         """
+        safe_brief = sanitize_brief(brief)
         logger.info("query_decomposition_started")
 
         prompt = prompts.QUERY_DECOMPOSITION_PROMPT.format(
-            brief=brief,
+            brief=safe_brief,
             risk_tolerance=profile.risk_tolerance,
             purchase_cycle=profile.purchase_cycle,
             tech_savviness=profile.tech_savviness,
@@ -66,7 +70,7 @@ class DecomposeQueriesUseCase:
 
         if not sub_queries:
             # Fallback: use the brief itself as a single query
-            sub_queries = [brief]
+            sub_queries = [safe_brief]
 
         logger.info("query_decomposition_complete", count=len(sub_queries), queries=sub_queries)
         return sub_queries

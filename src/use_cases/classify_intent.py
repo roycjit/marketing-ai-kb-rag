@@ -1,14 +1,16 @@
 """Intent classification use case — infers psychographic profile from brief."""
 
+from __future__ import annotations
+
 import json
-from typing import Tuple
 
 import structlog
 
 from domain.models import PsychographicProfile
+from domain.validation import sanitize_brief
 from frameworks.config import OLLAMA_CLASSIFICATION_MODEL
-from interface_adapters.llm.ollama_client import OllamaClient
 from interface_adapters.llm import prompt_templates as prompts
+from interface_adapters.llm.ollama_client import OllamaClient
 
 logger = structlog.get_logger(__name__)
 
@@ -17,6 +19,7 @@ class ClassifyIntentUseCase:
     """Classify psychographic intent from a user brief."""
 
     def __init__(self, llm_client: OllamaClient) -> None:
+        """Initialize with an LLM client."""
         self._llm = llm_client
 
     def execute(self, brief: str) -> PsychographicProfile:
@@ -28,9 +31,11 @@ class ClassifyIntentUseCase:
         Returns:
             PsychographicProfile with 5 dimensions.
         """
-        logger.info("intent_classification_started", brief_preview=brief[:80])
+        # Validate and sanitize input at the boundary
+        safe_brief = sanitize_brief(brief)
+        logger.info("intent_classification_started", brief_preview=safe_brief[:80])
 
-        prompt = prompts.INTENT_CLASSIFICATION_PROMPT.format(brief=brief)
+        prompt = prompts.INTENT_CLASSIFICATION_PROMPT.format(brief=safe_brief)
         raw = self._llm.generate(
             model=OLLAMA_CLASSIFICATION_MODEL,
             prompt=prompt,

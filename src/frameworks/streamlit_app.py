@@ -4,10 +4,19 @@ This module contains NO business logic. It only renders widgets,
 calls the agent graph, and displays results.
 """
 
-import streamlit as st
+from __future__ import annotations
 
+import contextlib
+import time
+import uuid
+
+import streamlit as st
+import structlog
+
+from frameworks.agent_graph import FunnelAgentGraph
 from frameworks.config import ENVIRONMENT
-from frameworks.database import SessionLocal
+from frameworks.database import get_db
+from interface_adapters.embeddings.cross_encoder_client import CrossEncoderReranker
 from interface_adapters.embeddings.sentence_transformer_client import (
     SentenceTransformerEmbedder,
 )
@@ -15,34 +24,54 @@ from interface_adapters.llm.ollama_client import OllamaClient
 from interface_adapters.repositories.pgvector_search_repo import (
     PgVectorSearchRepository,
 )
-from interface_adapters.repositories.sqlalchemy_chunk_repo import (
-    SQLAlchemyChunkRepository,
-)
 from use_cases.classify_intent import ClassifyIntentUseCase
 from use_cases.decompose_queries import DecomposeQueriesUseCase
 from use_cases.generate_strategy import GenerateStrategyUseCase
 from use_cases.search_chunks import HybridSearchUseCase
-from frameworks.agent_graph import FunnelAgentGraph
+
+logger = structlog.get_logger(__name__)
+
+# Rate-limiting constants
+_MIN_REQUEST_INTERVAL_SECONDS = 30
 
 
-@st.cache_resource
-def _build_agent() -> FunnelAgentGraph:
-    """Wire dependencies and build the agent graph.
+def _get_agent_for_session() -> FunnelAgentGraph:
+    """Build the agent graph with a fresh database session.
 
-    Cached across Streamlit reruns to avoid re-creating sessions.
+    Unlike the previous @st.cache_resource approach that leaked sessions,
+    this creates a new session per Streamlit session and closes it on cleanup.
     """
-    db = SessionLocal()
+    db = next(get_db())
+
+    # Ensure session is closed when the Streamlit script run ends
+    # by registering it in session state for manual cleanup on rerun
+    if "db_session" in st.session_state:
+        with contextlib.suppress(Exception):
+            st.session_state["db_session"].close()
+
+    st.session_state["db_session"] = db
+
     search_repo = PgVectorSearchRepository(db)
-    chunk_repo = SQLAlchemyChunkRepository(db)
     embedder = SentenceTransformerEmbedder()
+    reranker = CrossEncoderReranker()
     llm = OllamaClient()
 
     classify_uc = ClassifyIntentUseCase(llm)
     decompose_uc = DecomposeQueriesUseCase(llm)
-    search_uc = HybridSearchUseCase(search_repo, embedder)
+    search_uc = HybridSearchUseCase(search_repo, embedder, reranker=reranker)
     generate_uc = GenerateStrategyUseCase(llm)
 
     return FunnelAgentGraph(classify_uc, decompose_uc, search_uc, generate_uc)
+
+
+def _check_rate_limit() -> bool:
+    """Return True if the user is allowed to make a request."""
+    last_request = st.session_state.get("last_request_time", 0)
+    now = time.time()
+    if now - last_request < _MIN_REQUEST_INTERVAL_SECONDS:
+        return False
+    st.session_state["last_request_time"] = now
+    return True
 
 
 def render_app() -> None:
@@ -76,6 +105,7 @@ def render_app() -> None:
                     "to homeowners in rural Germany"
                 ),
                 height=100,
+                max_chars=10_000,
             )
 
         generate_clicked = st.button("Generate Strategy", type="primary", use_container_width=True)
@@ -88,10 +118,20 @@ def render_app() -> None:
         st.warning("Please enter a campaign brief.")
         return
 
-    # Build agent (cached)
+    # Rate limiting
+    if not _check_rate_limit():
+        st.warning(f"⏱️ Please wait {_MIN_REQUEST_INTERVAL_SECONDS} seconds between requests.")
+        return
+
+    # Generate correlation ID for tracing this request
+    request_id = str(uuid.uuid4())[:8]
+    log = logger.bind(request_id=request_id)
+
+    # Build agent with fresh DB session (NOT cached)
     try:
-        agent = _build_agent()
+        agent = _get_agent_for_session()
     except Exception as exc:
+        log.error("agent_initialization_failed", error=str(exc))
         st.error(f"Failed to initialize agent: {exc}")
         if ENVIRONMENT == "development":
             st.exception(exc)
@@ -101,10 +141,13 @@ def render_app() -> None:
     with st.status("🔍 Analyzing brief...", expanded=True) as status:
         try:
             full_input = f"URL: {url}\nBrief: {brief}" if url else brief
+            log.info("pipeline_started", brief_preview=brief[:80])
             result = agent.run(full_input)
             status.update(label="✅ Strategy generated", state="complete")
+            log.info("pipeline_complete", has_strategy=result.get("strategy") is not None)
         except Exception as exc:
             status.update(label="❌ Generation failed", state="error")
+            log.error("pipeline_failed", error=str(exc))
             st.error(f"Pipeline error: {exc}")
             if ENVIRONMENT == "development":
                 st.exception(exc)
@@ -115,6 +158,10 @@ def render_app() -> None:
     strategy = result.get("strategy")
     search_results = result.get("search_results", [])
     sub_queries = result.get("sub_queries", [])
+    error = result.get("error")
+
+    if error:
+        st.warning(f"Partial result: {error}")
 
     if profile:
         with st.expander("📊 Inferred Audience Profile", expanded=False):
@@ -126,7 +173,7 @@ def render_app() -> None:
                 ("Age Bracket", profile.age_bracket),
                 ("Price Sensitivity", profile.price_sensitivity),
             ]
-            for col, (label, value) in zip(cols, dims):
+            for col, (label, value) in zip(cols, dims, strict=True):
                 col.metric(label, value.title())
 
     if sub_queries:

@@ -36,11 +36,11 @@ class TestRrfFuse:
         keyword = [SearchResult(chunk=b, similarity_score=0.0, keyword_score=0.7), SearchResult(chunk=a, similarity_score=0.0, keyword_score=0.6)]
 
         result = rrf_fuse(semantic, keyword)
-        # b is rank 2 in semantic, rank 1 in keyword → better RRF than a
-        assert result[0].chunk.chunk_id == "b"
-        assert result[1].chunk.chunk_id == "a"
-        # Both should have higher scores than if they appeared in only one list
+        # a and b have identical RRF scores: 1/61 + 1/62 == 1/62 + 1/61
+        # Both documents should appear and have higher scores than single-list minimum
+        assert len(result) == 2
         assert result[0].similarity_score > 1 / 60  # more than single-list minimum
+        assert result[1].similarity_score > 1 / 60
 
     def test_deduplicates_by_chunk_id(self):
         a = _make_chunk("a")

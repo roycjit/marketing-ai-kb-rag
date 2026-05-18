@@ -1,9 +1,9 @@
-"""Abstract repository interfaces — the domain defines the contract,
-interface adapters provide the implementation.
+"""Abstract repository interfaces.
+
+The domain defines the contract; interface adapters provide the implementation.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 from domain.models import Chunk, SearchResult
 
@@ -12,17 +12,17 @@ class ChunkRepository(ABC):
     """Persistence interface for document chunks."""
 
     @abstractmethod
-    def save_all(self, chunks: List[Chunk]) -> None:
+    def save_all(self, chunks: list[Chunk]) -> None:
         """Persist multiple chunks in a single transaction."""
         ...
 
     @abstractmethod
-    def get_by_id(self, chunk_id: str) -> Optional[Chunk]:
+    def get_by_id(self, chunk_id: str) -> Chunk | None:
         """Fetch a single chunk by its UUID."""
         ...
 
     @abstractmethod
-    def list_by_source(self, source_doc: str) -> List[Chunk]:
+    def list_by_source(self, source_doc: str) -> list[Chunk]:
         """Retrieve all chunks originating from a given document."""
         ...
 
@@ -33,10 +33,10 @@ class SearchRepository(ABC):
     @abstractmethod
     def similarity_search(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[SearchResult]:
+        filters: dict | None = None,
+    ) -> list[SearchResult]:
         """Execute approximate nearest-neighbor search via vector index.
 
         Args:
@@ -54,8 +54,8 @@ class SearchRepository(ABC):
         self,
         query: str,
         top_k: int = 10,
-        filters: Optional[dict] = None,
-    ) -> List[SearchResult]:
+        filters: dict | None = None,
+    ) -> list[SearchResult]:
         """Execute full-text / BM25 keyword search.
 
         Args:
