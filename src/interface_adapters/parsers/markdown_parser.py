@@ -90,7 +90,9 @@ class MarkdownParser:
 
         metadata = post.metadata or {}
         body = post.content.strip()
-        title = metadata.get("title") or self._infer_title(body) or file_path.stem
+        raw_title = metadata.get("title")
+        fallback = self._infer_title(body) or file_path.stem
+        title = raw_title if isinstance(raw_title, str) else fallback
 
         return ParsedDocument(
             source_doc=file_path.name,
