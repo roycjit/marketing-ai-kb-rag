@@ -182,6 +182,3 @@ def outcome_rerank(results: list[SearchResult], top_k: int = 10) -> list[SearchR
 
     boosted = sorted(results, key=_boost, reverse=True)
     return boosted[:top_k]
-
-
-
